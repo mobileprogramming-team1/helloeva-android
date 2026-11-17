@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Waveform logo on the 108dp adaptive icon canvas (safe zone: center 66dp) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="@color/eva_lime" android:pathData="M36,48a3,3 0 0 1 6,0v12a3,3 0 0 1 -6,0z" />
+    <path android:fillColor="@color/eva_lime" android:pathData="M45,40a3,3 0 0 1 6,0v28a3,3 0 0 1 -6,0z" />
+    <path android:fillColor="@color/eva_lime" android:pathData="M54,34a3,3 0 0 1 6,0v40a3,3 0 0 1 -6,0z" />
+    <path android:fillColor="@color/eva_lime" android:pathData="M63,42a3,3 0 0 1 6,0v24a3,3 0 0 1 -6,0z" />
+    <path android:fillColor="@color/eva_lime" android:pathData="M72,49a3,3 0 0 1 6,0v10a3,3 0 0 1 -6,0z" />
+</vector>
