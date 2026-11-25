@@ -190,7 +190,7 @@ Already done (shared base): project setup, theme, shared components, every scree
 chat state machine, all on `FakeConversationRepository`. The work below replaces the fakes with real features.
 First step together: agree on the `ConversationRepository` proposal above; then the two parts can be built separately.
 
-### Part A: Account, data, API (owner: TBD)
+### Part A: Account, data, API (owner: teammate)
 
 | Task | Where |
 |---|---|
@@ -203,7 +203,7 @@ First step together: agree on the `ConversationRepository` proposal above; then 
 | Settings: `GET /users/me`, terms pages, logout / withdraw | `SettingsScreen`, `HelloEvaNavHost` |
 | Error state + retry on home / create / settings | `HomeViewModel`, `CreateConversationViewModel` |
 
-### Part B: Mock test (chat) and audio (owner: TBD)
+### Part B: Mock test (chat) and audio (owner: dondon-ri)
 
 | Task | Where |
 |---|---|

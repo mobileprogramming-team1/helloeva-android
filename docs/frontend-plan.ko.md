@@ -190,7 +190,7 @@ OpenAI 는 **백엔드에서만** 호출한다. 앱에는 절대 API 키를 넣�
 모두 `FakeConversationRepository` 로 동작한다. 아래 작업은 Fake 를 실제 기능으로 바꾸는 일이다.
 먼저 함께 할 일: 위 `ConversationRepository` 변경안을 합의한다. 그 뒤에는 두 파트를 따로 작업할 수 있다.
 
-### 파트 A: 계정 · 데이터 · API (담당: 미정)
+### 파트 A: 계정 · 데이터 · API (담당: 팀원)
 
 | 작업 | 위치 |
 |---|---|
@@ -203,7 +203,7 @@ OpenAI 는 **백엔드에서만** 호출한다. 앱에는 절대 API 키를 넣�
 | 설정: `GET /users/me`, 약관 화면, 로그아웃 / 탈퇴 | `SettingsScreen`, `HelloEvaNavHost` |
 | 홈 / 대화 생성 / 설정 화면의 에러 상태 + 재시도 | `HomeViewModel`, `CreateConversationViewModel` |
 
-### 파트 B: 모의고사(채팅) · 음성 (담당: 미정)
+### 파트 B: 모의고사(채팅) · 음성 (담당: dondon-ri)
 
 | 작업 | 위치 |
 |---|---|
