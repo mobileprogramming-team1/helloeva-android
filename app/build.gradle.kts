@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.media3.exoplayer)
 
     testImplementation(libs.junit)
 }

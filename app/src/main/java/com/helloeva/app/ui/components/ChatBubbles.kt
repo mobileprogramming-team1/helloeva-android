@@ -213,7 +213,7 @@ private fun ChatBubblesPreview() {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             EvaMessage { EvaAudioBubble("0:07 / 0:15", 0.5f, icon = EvaIcons.Pause, onIconClick = {}) }
             EvaMessage { EvaAudioBubble("0:15", 0f, icon = EvaIcons.Replay, onIconClick = {}) }
-            UserAudioMessage("00:42", "답변을 녹음하고 있어요 · 최대 3:00", recording = true)
+            UserAudioMessage("00:42", "답변을 녹음하고 있어요 · 최대 2:00", recording = true)
             EvaMessage(label = "Eva의 질문") { EvaTextBubble("Tell me about a park you often visit.") }
             UserTextMessage("I often go to Hangang Park near my house.")
             EvaMessage { TypingBubble() }

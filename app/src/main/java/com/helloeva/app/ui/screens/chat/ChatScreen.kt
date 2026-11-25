@@ -1,7 +1,11 @@
 package com.helloeva.app.ui.screens.chat
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -20,19 +24,27 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.helloeva.app.data.model.QUESTIONS_PER_TEST
@@ -66,14 +78,43 @@ fun ChatScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val activity = LocalActivity.current
+    var micDialog by remember { mutableStateOf<MicDialog?>(null) }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) viewModel.startRecording()
-        // TODO: explain why the mic is needed when denied
+        if (granted) {
+            viewModel.startRecording()
+        } else {
+            // After "don't ask again" the system dialog no longer shows, so send the user to Settings.
+            val canAskAgain = activity != null &&
+                ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+            micDialog = if (canAskAgain) MicDialog.ASK_AGAIN else MicDialog.OPEN_SETTINGS
+        }
     }
     val onRecord = {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) viewModel.startRecording() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    // ON_PAUSE, not ON_STOP: Android can deliver ON_STOP seconds late after Home,
+    // and we'd keep recording while the app is hidden.
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { viewModel.onScreenPaused() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onScreenResumed() }
+
+    micDialog?.let { dialog ->
+        MicPermissionDialog(
+            dialog = dialog,
+            onConfirm = {
+                micDialog = null
+                when (dialog) {
+                    MicDialog.ASK_AGAIN -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    MicDialog.OPEN_SETTINGS -> context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                    )
+                }
+            },
+            onDismiss = { micDialog = null },
+        )
     }
 
     // Keep the newest content in view.
@@ -189,7 +230,7 @@ private fun LazyListScope.currentQuestion(state: ChatUiState, onReplay: () -> Un
         item(key = "current-$i-answer") {
             UserAudioMessage(
                 timeText = state.recordSeconds.mmssPadded(),
-                caption = if (state.phase == ChatPhase.RECORDING) "답변을 녹음하고 있어요 · 최대 3:00" else "답변 전송 완료",
+                caption = if (state.phase == ChatPhase.RECORDING) "답변을 녹음하고 있어요 · 최대 ${ChatViewModel.MAX_ANSWER_SECONDS.mmss()}" else "답변 전송 완료",
                 recording = state.phase == ChatPhase.RECORDING,
             )
         }
@@ -230,7 +271,7 @@ private fun BottomAction(
                     .background(EvaColors.Lime, RoundedCornerShape(12.dp))
                     .padding(horizontal = 14.dp, vertical = 8.dp),
             ) {
-                Text("준비되면 마이크를 눌러 답변해 주세요", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                Text(state.notice ?: "준비되면 마이크를 눌러 답변해 주세요", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
             }
             RecordButton(recording = false, onClick = onRecord, label = "눌러서 답변 시작")
         }
@@ -240,6 +281,30 @@ private fun BottomAction(
         ChatPhase.FINAL_LOADING -> StatusBar("전체 결과를 정리하고 있어요...", leading = { SmallSpinner() })
         ChatPhase.FINISHED -> StatusBar("수고하셨습니다 :)")
     }
+}
+
+private enum class MicDialog { ASK_AGAIN, OPEN_SETTINGS }
+
+@Composable
+private fun MicPermissionDialog(dialog: MicDialog, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("마이크 권한이 필요해요") },
+        text = {
+            Text(
+                when (dialog) {
+                    MicDialog.ASK_AGAIN -> "답변을 녹음해서 Eva가 분석하려면 마이크 권한이 필요해요."
+                    MicDialog.OPEN_SETTINGS -> "답변을 녹음하려면 마이크 권한이 필요해요. 설정 > 권한에서 마이크를 허용해 주세요."
+                },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(if (dialog == MicDialog.ASK_AGAIN) "허용하기" else "설정 열기")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
 }
 
 @Composable
