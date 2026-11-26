@@ -20,6 +20,7 @@ import com.helloeva.app.data.model.Turn
 import com.helloeva.app.data.repository.ConversationRepository
 import com.helloeva.app.ui.appContainer
 import com.helloeva.app.ui.navigation.ChatRoute
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** The mock test state machine. Each phase maps to one Figma/preview state. */
 enum class ChatPhase {
@@ -35,9 +37,11 @@ enum class ChatPhase {
     READY,          // ② tap mic to answer (1 replay allowed)
     RECORDING,      // ③ recording, max 2:00
     ANALYZING,      // ④ uploading + STT + analysis
+    UPLOAD_FAILED,  // ④' upload failed: send the same file again, or record again
     FEEDBACK,       // ⑤ question/answer text + analysis card
     FINAL_LOADING,  // building the final feedback
     FINISHED,       // ⑥ final feedback
+    ERROR,          // loading the chat / next question / final feedback failed: "다시 시도"
 }
 
 data class ChatUiState(
@@ -50,7 +54,7 @@ data class ChatUiState(
     val replaysLeft: Int = 1,
     val recordSeconds: Int = 0,
     val finalFeedback: FinalFeedback? = null,
-    /** One-line message shown above the mic button (e.g. recording was cancelled). */
+    /** One-line message above the bottom action (recording cancelled, upload failed, ...). */
     val notice: String? = null,
 ) {
     val isLastQuestion: Boolean get() = questionIndex == QUESTIONS_PER_TEST
@@ -73,9 +77,22 @@ class ChatViewModel(
     private var questionAudioUrl: String? = null
     private var recordStartedAt = 0L
 
+    /** The recorded answer, kept until the upload succeeds so it can be sent again. */
+    private var pendingAnswer: File? = null
+
+    /** What "다시 시도" repeats while in [ChatPhase.ERROR]. */
+    private var retryAction: (() -> Unit)? = null
+
     init {
+        loadHistory()
+    }
+
+    private fun loadHistory() {
+        _uiState.update { it.copy(phase = ChatPhase.LOADING, notice = null) }
         viewModelScope.launch {
-            val history = repository.getHistory(conversationId)
+            val history = callOrShowError("대화를 불러오지 못했어요", retry = ::loadHistory) {
+                repository.getHistory(conversationId)
+            } ?: return@launch
             _uiState.update {
                 it.copy(
                     targetGrade = history.conversation.targetGrade,
@@ -96,7 +113,9 @@ class ChatViewModel(
         playbackJob?.cancel()
         playbackJob = viewModelScope.launch {
             _uiState.update { it.copy(phase = ChatPhase.ASKING, playProgress = 0f, replaysLeft = 1, recordSeconds = 0, notice = null) }
-            val question = repository.getQuestion(conversationId, _uiState.value.questionIndex)
+            val question = callOrShowError("문제를 불러오지 못했어요", retry = ::startQuestion) {
+                repository.getQuestion(conversationId, _uiState.value.questionIndex)
+            } ?: return@launch
             questionAudioUrl = question.audioUrl
             _uiState.update { it.copy(questionSeconds = question.durationSeconds) }
             playQuestion()
@@ -165,16 +184,49 @@ class ChatViewModel(
             _uiState.update { it.copy(phase = ChatPhase.READY, notice = message) }
             return
         }
-        _uiState.update { it.copy(phase = ChatPhase.ANALYZING) }
+        pendingAnswer = audio
+        uploadAnswer()
+    }
+
+    private fun uploadAnswer() {
+        val audio = pendingAnswer ?: return
+        _uiState.update { it.copy(phase = ChatPhase.ANALYZING, notice = null) }
         viewModelScope.launch {
             val index = _uiState.value.questionIndex
-            // TODO(Part B): error state + retry (keep the file until the upload succeeds)
-            val result = repository.submitAnswer(conversationId, index, audio)
+            val result = try {
+                repository.submitAnswer(conversationId, index, audio)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(phase = ChatPhase.UPLOAD_FAILED, notice = errorMessage(e, "답변을 보내지 못했어요")) }
+                return@launch
+            }
             audio.delete()
+            pendingAnswer = null
             val turn = Turn(index, result.questionText, result.answerText, result.feedback)
-            _uiState.update { it.copy(phase = ChatPhase.FEEDBACK, turns = it.turns + turn) }
+            _uiState.update { it.copy(phase = ChatPhase.FEEDBACK, turns = it.turns + turn, notice = null) }
         }
     }
+
+    /** "다시 보내기": upload the same recording again. */
+    fun retryUpload() {
+        if (_uiState.value.phase != ChatPhase.UPLOAD_FAILED) return
+        uploadAnswer()
+    }
+
+    /** "다시 녹음하기": throw the failed recording away and answer again. */
+    fun recordAgain() {
+        if (_uiState.value.phase != ChatPhase.UPLOAD_FAILED) return
+        pendingAnswer?.delete()
+        pendingAnswer = null
+        _uiState.update { it.copy(phase = ChatPhase.READY, recordSeconds = 0, notice = null) }
+    }
+
+    // TODO: once Part A adds an API error type, show the server's `message` (it's written for users).
+    @Suppress("UNUSED_PARAMETER")
+    private fun errorMessage(e: Exception, what: String): String =
+        "$what. 인터넷 연결을 확인해 주세요"
+
 
     /** The user left the screen (Home, another app, a call): pause the question, throw away a half-finished answer. */
     fun onScreenPaused() {
@@ -197,6 +249,7 @@ class ChatViewModel(
 
     override fun onCleared() {
         recorder.cancel()
+        pendingAnswer?.delete()
         player.release()
     }
 
@@ -207,13 +260,42 @@ class ChatViewModel(
             _uiState.update { it.copy(questionIndex = it.questionIndex + 1) }
             startQuestion()
         } else {
-            viewModelScope.launch {
-                _uiState.update { it.copy(phase = ChatPhase.FINAL_LOADING) }
-                val final = repository.getFinalFeedback(conversationId)
-                _uiState.update { it.copy(phase = ChatPhase.FINISHED, finalFeedback = final) }
-            }
+            loadFinalFeedback()
         }
     }
+
+    private fun loadFinalFeedback() {
+        _uiState.update { it.copy(phase = ChatPhase.FINAL_LOADING, notice = null) }
+        viewModelScope.launch {
+            val final = callOrShowError("전체 결과를 불러오지 못했어요", retry = ::loadFinalFeedback) {
+                repository.getFinalFeedback(conversationId)
+            } ?: return@launch
+            _uiState.update { it.copy(phase = ChatPhase.FINISHED, finalFeedback = final) }
+        }
+    }
+
+    /** "다시 시도" in the ERROR state. */
+    fun retry() {
+        if (_uiState.value.phase != ChatPhase.ERROR) return
+        val action = retryAction ?: return
+        retryAction = null
+        action()
+    }
+
+    /**
+     * Runs a repository call. On failure, shows the ERROR state with [what] and
+     * remembers [retry] for the "다시 시도" button, then returns null.
+     */
+    private suspend fun <T> callOrShowError(what: String, retry: () -> Unit, call: suspend () -> T): T? =
+        try {
+            call()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            retryAction = retry
+            _uiState.update { it.copy(phase = ChatPhase.ERROR, notice = errorMessage(e, what)) }
+            null
+        }
 
     companion object {
         /** The API accepts answers up to 2 minutes. */

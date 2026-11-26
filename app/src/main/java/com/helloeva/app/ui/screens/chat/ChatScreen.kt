@@ -173,6 +173,9 @@ fun ChatScreen(
                 onRecord = onRecord,
                 onStop = viewModel::stopRecording,
                 onNext = viewModel::next,
+                onRetryUpload = viewModel::retryUpload,
+                onRecordAgain = viewModel::recordAgain,
+                onRetry = viewModel::retry,
             )
         }
     }
@@ -188,7 +191,7 @@ private fun LazyListScope.finishedTurns(state: ChatUiState) {
 }
 
 private fun LazyListScope.currentQuestion(state: ChatUiState, onReplay: () -> Unit) {
-    val active = state.phase in setOf(ChatPhase.ASKING, ChatPhase.READY, ChatPhase.RECORDING, ChatPhase.ANALYZING)
+    val active = state.phase in setOf(ChatPhase.ASKING, ChatPhase.READY, ChatPhase.RECORDING, ChatPhase.ANALYZING, ChatPhase.UPLOAD_FAILED)
     if (!active) return
     val i = state.questionIndex
 
@@ -226,11 +229,15 @@ private fun LazyListScope.currentQuestion(state: ChatUiState, onReplay: () -> Un
             }
         }
     }
-    if (state.phase == ChatPhase.RECORDING || state.phase == ChatPhase.ANALYZING) {
+    if (state.phase in setOf(ChatPhase.RECORDING, ChatPhase.ANALYZING, ChatPhase.UPLOAD_FAILED)) {
         item(key = "current-$i-answer") {
             UserAudioMessage(
                 timeText = state.recordSeconds.mmssPadded(),
-                caption = if (state.phase == ChatPhase.RECORDING) "답변을 녹음하고 있어요 · 최대 ${ChatViewModel.MAX_ANSWER_SECONDS.mmss()}" else "답변 전송 완료",
+                caption = when (state.phase) {
+                    ChatPhase.RECORDING -> "답변을 녹음하고 있어요 · 최대 ${ChatViewModel.MAX_ANSWER_SECONDS.mmss()}"
+                    ChatPhase.UPLOAD_FAILED -> "전송 실패"
+                    else -> "답변 전송 완료"
+                },
                 recording = state.phase == ChatPhase.RECORDING,
             )
         }
@@ -258,6 +265,9 @@ private fun BottomAction(
     onRecord: () -> Unit,
     onStop: () -> Unit,
     onNext: () -> Unit,
+    onRetryUpload: () -> Unit,
+    onRecordAgain: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     when (state.phase) {
         ChatPhase.LOADING -> StatusBar("불러오는 중...")
@@ -277,9 +287,20 @@ private fun BottomAction(
         }
         ChatPhase.RECORDING -> RecordButton(recording = true, onClick = onStop, label = "눌러서 답변 완료")
         ChatPhase.ANALYZING -> StatusBar("Eva가 답변을 분석하고 있어요...", leading = { SmallSpinner() })
+        ChatPhase.UPLOAD_FAILED -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            state.notice?.let { ErrorText(it) }
+            PrimaryButton("다시 보내기", onClick = onRetryUpload)
+            TextButton(onClick = onRecordAgain, modifier = Modifier.padding(top = 4.dp)) {
+                Text("다시 녹음하기", style = MaterialTheme.typography.labelLarge, color = EvaColors.Gray500)
+            }
+        }
         ChatPhase.FEEDBACK -> PrimaryButton(if (state.isLastQuestion) "전체 피드백 보기" else "다음 문제", onClick = onNext)
         ChatPhase.FINAL_LOADING -> StatusBar("전체 결과를 정리하고 있어요...", leading = { SmallSpinner() })
         ChatPhase.FINISHED -> StatusBar("수고하셨습니다 :)")
+        ChatPhase.ERROR -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            state.notice?.let { ErrorText(it) }
+            PrimaryButton("다시 시도", onClick = onRetry)
+        }
     }
 }
 
@@ -304,6 +325,16 @@ private fun MicPermissionDialog(dialog: MicDialog, onConfirm: () -> Unit, onDism
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+@Composable
+private fun ErrorText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+        color = EvaColors.Danger,
+        modifier = Modifier.padding(bottom = 12.dp),
     )
 }
 
